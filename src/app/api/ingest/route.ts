@@ -50,25 +50,20 @@ export async function POST(req: Request) {
     const chunks = chunkText(rawText, 1000, 200);
 
     // 6. Generate embeddings and insert chunks into database
-    // Engineering Decision (Tradeoff): 
-    // In a massive production system with enterprise API quotas, we would process these in parallel 
-    // using `Promise.all()` or a concurrency limiter (like p-limit) to drastically reduce ingestion latency. 
-    // However, to protect our Gemini Free Tier quota from HTTP 429 (Too Many Requests) errors during a burst, 
-    // we explicitly map these sequentially. Reliability > Latency for the free tier.
-    const chunksToInsert = [];
-
-    for (let i = 0; i < chunks.length; i++) {
-      const content = chunks[i];
-      // Generate the vector representation of this chunk using Gemini
+    // We process these in parallel using Promise.all() to prevent Vercel's 10-second 
+    // Serverless Function timeout. Gemini's text-embedding-004 allows 1500 RPM on the free tier,
+    // which is plenty to handle parallel processing for standard documents.
+    const chunkPromises = chunks.map(async (content, i) => {
       const embedding = await generateEmbedding(content);
-
-      chunksToInsert.push({
+      return {
         document_id: documentId,
         chunk_index: i,
         content: content,
-        embedding: embedding // pgvector accepts standard JSON arrays
-      });
-    }
+        embedding: embedding, // pgvector accepts standard JSON arrays
+      };
+    });
+
+    const chunksToInsert = await Promise.all(chunkPromises);
 
     // Insert all chunks at once
     const { error: chunksError } = await supabase
