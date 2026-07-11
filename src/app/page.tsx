@@ -40,8 +40,19 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to process document");
+        let errorMessage = "Failed to process document";
+        try {
+          const text = await response.text();
+          try {
+            const errorData = JSON.parse(text);
+            errorMessage = errorData.error || errorMessage;
+          } catch (e) {
+            errorMessage = `Server Error (${response.status}): ` + text.slice(0, 100);
+          }
+        } catch (e) {
+          // fallback if reading text fails
+        }
+        throw new Error(errorMessage);
       }
 
       setStatus("success");
