@@ -37,8 +37,8 @@ graph TD
     end
 
     subgraph "Background — Data Lifecycle"
-        Cron[Vercel Cron Job] -->|Daily at midnight UTC| Cleanup[/api/cron/cleanup]
-        Cleanup -->|DELETE WHERE age > 24h| Supabase
+        Cron[Vercel Cron Job] -->|Daily at midnight UTC| Cleanup["Cleanup API"]
+        Cleanup -->|"DELETE WHERE age greater than 24h"| Supabase
     end
 ```
 
