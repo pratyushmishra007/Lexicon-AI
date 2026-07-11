@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { PDFParse } from "pdf-parse";
+import pdfParse from "pdf-parse";
 import { chunkText } from "@/lib/chunking";
 import { generateEmbedding } from "@/lib/gemini";
 import { supabase } from "@/lib/supabase";
@@ -23,8 +23,7 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(arrayBuffer);
 
     // 3. Extract raw text from the PDF
-    const parser = new PDFParse({ data: buffer });
-    const pdfData = await parser.getText();
+    const pdfData = await pdfParse(buffer);
     const rawText = pdfData.text;
 
     if (!rawText || rawText.trim().length === 0) {
