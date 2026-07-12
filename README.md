@@ -276,3 +276,50 @@ npm run dev
 2. Import the repository in [Vercel](https://vercel.com).
 3. Add all environment variables from `.env.local` to the Vercel project settings.
 4. Deploy - the cron job in `vercel.json` will automatically schedule the daily cleanup.
+
+---
+
+## Complete Application Walkthrough
+
+The application is built in two distinct phases: **Phase 1 (Data Ingestion)** where a PDF is converted into a mathematical format the AI can understand, and **Phase 2 (Querying)** where a user asks a question and the AI finds the relevant answers.
+
+Let's walk through exactly what happens when you upload a PDF and then ask a question about it.
+
+### Phase 1: Uploading and Ingesting the PDF
+
+#### 1. The Frontend UI (`src/app/page.tsx`)
+When you land on the page, the Next.js frontend presents an upload interface. When you drag and drop or select a PDF file, this component creates a `FormData` object containing your file and makes a `POST` HTTP request to the backend API (`/api/ingest`).
+
+#### 2. The Ingestion API (`src/app/api/ingest/route.ts`)
+This file is the engine for processing your documents. Here is exactly what it does step-by-step:
+1. **Validation & Reading**: It checks if the uploaded file is actually a PDF and reads it into a raw binary buffer in memory.
+2. **Text Extraction**: It passes this buffer to a library called `pdf-parse`, which rips out all the readable string text from the PDF's binary data.
+3. **Database Registration**: It connects to Supabase (PostgreSQL) and inserts a new row in the `documents` table to record that this file exists.
+4. **Chunking**: You can't send an entire 100-page book to an AI at once due to "context window" (token) limits. The code calls `chunkText()` (from `src/lib/chunking.ts`) to split the text into smaller blocks of **1,000 characters**. To ensure sentences aren't cut in half and lose their context, each chunk **overlaps the previous one by 200 characters**.
+5. **Vectorization (Embedding)**: For each text chunk, it calls `generateEmbedding()` (from `src/lib/gemini.ts`), which uses Google Gemini's `text-embedding-004` model. This converts the paragraph of text into an array of 768 floating-point numbers (a vector). This vector mathematically represents the "meaning" of the text.
+6. **Storage**: It saves all the chunks, their original text, and their 768-dimensional vectors into the `document_chunks` table in Supabase. 
+
+#### 3. The Database Schema (`schema.sql`)
+The PostgreSQL database running on Supabase is armed with a special extension called `pgvector`.
+- It sets up an `HNSW` (Hierarchical Navigable Small World) index. This is a special algorithm that organizes vectors so they can be searched lightning fast.
+- It contains a custom SQL function called `match_document_chunks`. We will use this in Phase 2 to find chunks that mean the same thing as the user's question.
+
+### Phase 2: Chatting with the PDF
+
+Once ingestion is done, the frontend swaps to a chat interface (`src/components/Chat.tsx`). You type a question (e.g., "What are the key skills mentioned?") and hit send.
+
+#### 4. The Chat API (`src/app/api/chat/route.ts`)
+This API endpoint receives your message and coordinates the search and response:
+
+1. **Security & Rate Limiting**: First, it extracts your IP address and checks it against an Upstash Redis rate limiter. If you're spamming questions, it blocks you instantly.
+2. **Semantic Caching**: It hashes your exact question using SHA-256 and checks the Redis database (`getCachedResponse`). If someone else (or you) asked this exact question previously, it bypasses the AI completely and streams back the cached response in milliseconds.
+3. **Question Vectorization**: If it's a new question (cache miss), it takes your question and runs it through the exact same Google Gemini Embedding API used in Phase 1 to get a 768-dimensional vector.
+4. **Vector Search (Retrieval)**: It calls that custom Supabase SQL function `match_document_chunks`. The database uses **Cosine Similarity** to compare your question's math vector against every chunk's math vector from the PDF. It returns the top 20 chunks of text that are most semantically related to your question.
+5. **Prompt Construction (Augmentation)**: It takes those top 20 text chunks, stitches them together into one giant block of text, and creates a "System Prompt":
+   > *"You are a helpful assistant. Use ONLY this provided context to answer... CONTEXT: [Stitched PDF Chunks]"*
+6. **Streaming LLM Generation**: It sends this massive prompt and your original question to Google's `gemini-2.0-flash` Large Language Model. The LLM reads the context, figures out the answer, and uses the Vercel AI SDK `streamText` to stream the text back to your browser token-by-token (so it looks like it's typing in real-time).
+7. **Cache Saving**: Once the AI finishes generating the response, the API saves the final answer to Redis so the next person asking the same question gets an instant reply.
+
+### Summary of the Flow
+**PDF -> Raw Text -> Smaller Text Chunks -> Meaning Vectors -> Database.**
+**Question -> Question Vector -> Search Database for closest Meaning Vectors -> Give Text Chunks to AI -> AI answers.**
