@@ -16,6 +16,7 @@ At its core, this is a **two-phase system**: an **Ingestion Pipeline** that proc
 graph TD
     User([User]) -->|1. Uploads PDF| FE[Next.js Frontend]
     FE -->|POST /api/ingest| IngestAPI[Ingest API Route]
+    
     User -->|2. Asks a Question| FE
     FE -->|POST /api/chat| ChatAPI[Chat API Route]
 
