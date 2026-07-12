@@ -1,12 +1,12 @@
 # Lexicon AI
 
-A production-grade **Retrieval-Augmented Generation** platform that lets users upload any PDF document and ask natural language questions about its contents. The system extracts, chunks, vectorizes, and stores the document in a PostgreSQL vector database, then uses semantic search and a large language model to generate accurate, context-aware answers — all streamed in real-time.
+A production-grade **Retrieval-Augmented Generation** platform that lets users upload any PDF document and ask natural language questions about its contents. The system extracts, chunks, vectorizes, and stores the document in a PostgreSQL vector database, then uses semantic search and a large language model to generate accurate, context-aware answers - all streamed in real-time.
 
 > Built with Next.js, Supabase pgvector, Google Gemini, Upstash Redis, and the Vercel AI SDK.
 
 ---
 
-## How It Works — The Complete Picture
+## How It Works - The Complete Picture
 
 At its core, this is a **two-phase system**: an **Ingestion Pipeline** that processes documents, and a **Query Pipeline** that answers questions. Both pipelines are protected by a Redis-backed rate limiter and enhanced by a semantic cache.
 
@@ -19,14 +19,14 @@ graph TD
     User -->|2. Asks a Question| FE
     FE -->|POST /api/chat| ChatAPI[Chat API Route]
 
-    subgraph "Phase 1 — Data Ingestion Pipeline"
+    subgraph "Phase 1 - Data Ingestion Pipeline"
         IngestAPI -->|Extract raw text| PDFParse[pdf-parse Library]
         PDFParse -->|Raw string| Chunker[Text Chunker]
         Chunker -->|Array of 1000-char chunks| EmbedAPI[Gemini Embedding API]
         EmbedAPI -->|768-D float vectors| Supabase[(Supabase pgvector DB)]
     end
 
-    subgraph "Phase 2 — Real-Time Query Pipeline"
+    subgraph "Phase 2 - Real-Time Query Pipeline"
         ChatAPI -->|Check IP rate limit| RateLimiter{{Redis Rate Limiter}}
         RateLimiter -->|Allowed| Cache{{Redis Semantic Cache}}
         Cache -->|Cache HIT| User
@@ -36,7 +36,7 @@ graph TD
         LLM -->|Streaming text| User
     end
 
-    subgraph "Background — Data Lifecycle"
+    subgraph "Background - Data Lifecycle"
         Cron[Vercel Cron Job] -->|Daily at midnight UTC| Cleanup["Cleanup API"]
         Cleanup -->|"DELETE WHERE age greater than 24h"| Supabase
     end
@@ -46,7 +46,7 @@ graph TD
 
 ## Deep Dive: The Data Flow
 
-### Phase 1: Ingestion — What happens when you upload a PDF
+### Phase 1: Ingestion - What happens when you upload a PDF
 
 ```mermaid
 sequenceDiagram
@@ -81,11 +81,11 @@ sequenceDiagram
 
 #### Step-by-step breakdown:
 
-1. **File Upload** — The user drags or selects a PDF. The frontend sends a `POST` request with `multipart/form-data` to `/api/ingest`.
+1. **File Upload** - The user drags or selects a PDF. The frontend sends a `POST` request with `multipart/form-data` to `/api/ingest`.
 
-2. **Text Extraction** — The API route reads the file into a Node.js `Buffer` and passes it to `pdf-parse`, which decodes the PDF binary format and returns a single raw text string.
+2. **Text Extraction** - The API route reads the file into a Node.js `Buffer` and passes it to `pdf-parse`, which decodes the PDF binary format and returns a single raw text string.
 
-3. **Text Chunking** — A single PDF can contain thousands of words. We can't send all of it to the LLM (token limits), so we split it into smaller chunks of **1,000 characters** each. Each chunk **overlaps the previous one by 200 characters** to prevent losing context at boundaries.
+3. **Text Chunking** - A single PDF can contain thousands of words. We can't send all of it to the LLM (token limits), so we split it into smaller chunks of **1,000 characters** each. Each chunk **overlaps the previous one by 200 characters** to prevent losing context at boundaries.
 
    ```
    Example: "The quick brown fox jumps over the lazy dog sits by the fire"
@@ -95,13 +95,13 @@ sequenceDiagram
                    ↑ 200-char overlap ↑
    ```
 
-4. **Vectorization** — Each chunk is sent to Google Gemini's Embedding API (`text-embedding-004`), which converts the text into a **768-dimensional floating-point vector**. This vector is a mathematical representation of the chunk's *meaning* — not its exact words.
+4. **Vectorization** - Each chunk is sent to Google Gemini's Embedding API (`text-embedding-004`), which converts the text into a **768-dimensional floating-point vector**. This vector is a mathematical representation of the chunk's *meaning* - not its exact words.
 
-5. **Storage** — We first create a parent `documents` row (with the filename), then batch-insert all chunks + their vectors into the `document_chunks` table. The `pgvector` extension stores these vectors natively and indexes them using the HNSW algorithm for O(log n) retrieval.
+5. **Storage** - We first create a parent `documents` row (with the filename), then batch-insert all chunks + their vectors into the `document_chunks` table. The `pgvector` extension stores these vectors natively and indexes them using the HNSW algorithm for O(log n) retrieval.
 
 ---
 
-### Phase 2: Query — What happens when you ask a question
+### Phase 2: Query - What happens when you ask a question
 
 ```mermaid
 sequenceDiagram
@@ -144,13 +144,13 @@ sequenceDiagram
 
 #### Step-by-step breakdown:
 
-1. **Rate Limiting** — Before anything happens, we extract the user's IP from the `x-forwarded-for` header and pass it through an Upstash Redis **Fixed-Window Rate Limiter**. If this IP has exceeded 10 requests in the last 60 seconds, we immediately return a `429 Too Many Requests` response — the request never reaches the LLM.
+1. **Rate Limiting** - Before anything happens, we extract the user's IP from the `x-forwarded-for` header and pass it through an Upstash Redis **Fixed-Window Rate Limiter**. If this IP has exceeded 10 requests in the last 60 seconds, we immediately return a `429 Too Many Requests` response - the request never reaches the LLM.
 
-2. **Semantic Cache Check** — We normalize the question (lowercase, trim, strip punctuation), hash it with **SHA-256**, and check Redis for a cached response. If found (cache HIT), we instantly stream the cached text back to the user — zero LLM cost, near-zero latency.
+2. **Semantic Cache Check** - We normalize the question (lowercase, trim, strip punctuation), hash it with **SHA-256**, and check Redis for a cached response. If found (cache HIT), we instantly stream the cached text back to the user - zero LLM cost, near-zero latency.
 
-3. **Question Vectorization** — On a cache MISS, we convert the user's question into a 768-D vector using the same Gemini Embedding API we used during ingestion.
+3. **Question Vectorization** - On a cache MISS, we convert the user's question into a 768-D vector using the same Gemini Embedding API we used during ingestion.
 
-4. **Vector Search (Cosine Similarity)** — We call a Supabase RPC function (`match_document_chunks`) that computes the **cosine similarity** between the question vector and every stored chunk vector. The top 20 closest chunks are returned, ranked by semantic relevance.
+4. **Vector Search (Cosine Similarity)** - We call a Supabase RPC function (`match_document_chunks`) that computes the **cosine similarity** between the question vector and every stored chunk vector. The top 20 closest chunks are returned, ranked by semantic relevance.
 
    ```
    Cosine Similarity = (A · B) / (|A| × |B|)
@@ -159,15 +159,15 @@ sequenceDiagram
    Score of 0.0 = Completely unrelated
    ```
 
-5. **Augmented Prompt Construction** — We take the top 20 chunks, concatenate them with `---` separators, and inject them into a system prompt:
+5. **Augmented Prompt Construction** - We take the top 20 chunks, concatenate them with `---` separators, and inject them into a system prompt:
    ```
    "You are a helpful assistant. Use ONLY this provided context to answer.
    CONTEXT: [chunk1] --- [chunk2] --- [chunk3] ..."
    ```
 
-6. **Streaming Response** — Gemini 2.0 Flash processes the augmented prompt and generates the answer. Using the Vercel AI SDK's `streamText()`, we stream each token to the frontend as it's generated — the user sees the response appear character-by-character in real-time.
+6. **Streaming Response** - Gemini 2.0 Flash processes the augmented prompt and generates the answer. Using the Vercel AI SDK's `streamText()`, we stream each token to the frontend as it's generated - the user sees the response appear character-by-character in real-time.
 
-7. **Cache Set** — After the stream completes, the `onFinish` callback saves the full response text to Redis with a 1-hour TTL. The next identical question will be served from cache.
+7. **Cache Set** - After the stream completes, the `onFinish` callback saves the full response text to Redis with a 1-hour TTL. The next identical question will be served from cache.
 
 ---
 
@@ -205,7 +205,7 @@ lexicon-ai/
 | **Sequential embedding** instead of `Promise.all()` | Free-tier Gemini API has strict rate limits. Parallel requests would trigger HTTP 429 errors. We chose **reliability over speed**. |
 | **Fixed-Window Rate Limiter** instead of Token Bucket | Simpler to reason about, lower Redis overhead. 10 req/min is sufficient for a demo; easily upgradable. |
 | **SHA-256 exact-match cache** instead of vector similarity cache | Exact-match is deterministic and has zero false positives. Semantic similarity caching requires a separate vector index and introduces cache coherence complexity. |
-| **`ON DELETE CASCADE`** on chunks | When a document expires, PostgreSQL automatically destroys all associated chunks and vectors at the database level — zero orphaned data, zero application-level cleanup code. |
+| **`ON DELETE CASCADE`** on chunks | When a document expires, PostgreSQL automatically destroys all associated chunks and vectors at the database level - zero orphaned data, zero application-level cleanup code. |
 | **Edge Runtime** for the chat route | Runs on Vercel's edge network (Cloudflare Workers), reducing cold start latency to near-zero for global users. |
 | **1000/200 chunk size/overlap** | 1000 chars keeps chunks small enough to fit many into the LLM context window. 200-char overlap ensures no sentence is split without context. |
 
@@ -233,7 +233,7 @@ lexicon-ai/
 - Node.js 18+
 - A [Supabase](https://supabase.com) project (free tier works)
 - A [Google AI Studio](https://aistudio.google.com) API key
-- An [Upstash](https://upstash.com) Redis database (optional — app works without it)
+- An [Upstash](https://upstash.com) Redis database (optional - app works without it)
 
 ### Setup
 
@@ -274,4 +274,4 @@ npm run dev
 1. Push your code to GitHub.
 2. Import the repository in [Vercel](https://vercel.com).
 3. Add all environment variables from `.env.local` to the Vercel project settings.
-4. Deploy — the cron job in `vercel.json` will automatically schedule the daily cleanup.
+4. Deploy - the cron job in `vercel.json` will automatically schedule the daily cleanup.
