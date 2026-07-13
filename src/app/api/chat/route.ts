@@ -30,10 +30,10 @@ export async function POST(req: Request) {
       if (!success) {
         console.log(`🔴 RATE LIMIT EXCEEDED FOR IP: ${ip}`);
         return new Response(
-          JSON.stringify({ 
-            error: "Too many requests. Please wait 60 seconds before asking another question." 
-          }), 
-          { 
+          JSON.stringify({
+            error: "Too many requests. Please wait 60 seconds before asking another question."
+          }),
+          {
             status: 429,
             headers: {
               'Content-Type': 'application/json',
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
     // --- REDIS SEMANTIC CACHING ---
     // Check if we've answered this exact question before
     const cachedText = await getCachedResponse(latestMessageText);
-    
+
     if (cachedText) {
       console.log("🟢 CACHE HIT: Returning cached response for:", latestMessageText);
       // Construct a simulated UIMessageStream response using Vercel AI SDK protocol
@@ -143,34 +143,38 @@ export async function POST(req: Request) {
       });
 
     const result = streamText({
-      model: google("gemini-2.0-flash"),
+      model: google("gemini-2.5-flash"),
       system: systemPrompt,
       messages: mappedMessages,
       maxRetries: 0, // Disable automatic retries to protect free-tier API quota
       onFinish: async ({ text }) => {
         // Save the generated response to Redis in the background
         if (text) {
-          await setCachedResponse(latestMessageText, text).catch(() => {});
+          await setCachedResponse(latestMessageText, text).catch(() => { });
         }
       }
     });
 
+    // Gracefully handle stream generation errors to prevent Next.js server crashes (unhandled rejections)
+    result.text.then(undefined, () => { });
+    result.response.then(undefined, () => { });
+
     return result.toUIMessageStreamResponse();
   } catch (error: any) {
     console.error("Chat API Error:", error);
-    
+
     // Check if it's a rate limit error from Google
     const isRateLimit = error?.statusCode === 429 || error?.message?.includes("429") || error?.message?.includes("quota");
-    
+
     return new Response(
-      JSON.stringify({ 
-        error: isRateLimit 
-          ? "API quota exceeded. Please wait a minute and try again." 
-          : (error.message || "An error occurred during chat") 
+      JSON.stringify({
+        error: isRateLimit
+          ? "API quota exceeded. Please wait a minute and try again."
+          : (error.message || "An error occurred during chat")
       }),
-      { 
-        status: isRateLimit ? 429 : 500, 
-        headers: { 'Content-Type': 'application/json' } 
+      {
+        status: isRateLimit ? 429 : 500,
+        headers: { 'Content-Type': 'application/json' }
       }
     );
   }

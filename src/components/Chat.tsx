@@ -12,12 +12,14 @@ export default function Chat() {
   const { messages, status, sendMessage } = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
     onError: (err) => {
-      // Parse the error message to show a user-friendly message
+      // Vercel AI SDK strips out the raw API error for security reasons and sends generic messages
+      // like "An error occurred." or "No output generated." 
+      // Because we know the most common cause is hitting the free-tier Gemini API quota, we show a unified error.
       const msg = err?.message || "";
       if (msg.includes("429") || msg.includes("quota") || msg.includes("Too many")) {
         setError("API quota exceeded. Please wait a minute before sending another message.");
       } else {
-        setError("Something went wrong. The AI service may be temporarily unavailable. Please try again.");
+        setError("The AI service is unavailable or your API quota has been exceeded. Please wait a minute and try again.");
       }
     },
   });
